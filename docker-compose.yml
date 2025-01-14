@@ -1,0 +1,103 @@
+version: '3'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: golershop
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./logs:/app/logs
+      - ./manifest:/app/manifest
+      - ./resource:/app/resource
+    environment:
+      - TZ=Asia/Shanghai
+      - GF_GCFG_FILE=config.docker.yaml
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=modulith_open
+      - MYSQL_PASSWORD=your_password
+      - MYSQL_DATABASE=modulith_open
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - DEBUG=false
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - golershop-network
+
+  mysql:
+    image: mysql:8.0
+    container_name: golershop-mysql
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=root_password
+      - MYSQL_DATABASE=modulith_open
+      - MYSQL_USER=modulith_open
+      - MYSQL_PASSWORD=your_password
+      - TZ=Asia/Shanghai
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./manifest/docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "$$MYSQL_USER", "-p$$MYSQL_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - golershop-network
+
+  redis:
+    image: redis:6.2-alpine
+    container_name: golershop-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - golershop-network
+
+  backup:
+    image: alpine:latest
+    container_name: golershop-backup
+    volumes:
+      - mysql_data:/var/lib/mysql:ro
+      - redis_data:/data:ro
+      - ./backups:/backups
+    command: |
+      sh -c 'while true; do
+        timestamp=$$(date +%Y%m%d_%H%M%S);
+        tar czf /backups/mysql_$$timestamp.tar.gz /var/lib/mysql;
+        tar czf /backups/redis_$$timestamp.tar.gz /data;
+        find /backups -type f -mtime +7 -delete;
+        sleep 86400;
+      done'
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - golershop-network
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  golershop-network:
+    driver: bridge
